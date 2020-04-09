@@ -2,16 +2,13 @@
 
 static PREFIX: &str = "0x";
 
-#[derive(Debug)]
-pub enum Error<'a> {
-    Length { expected_either: [usize; 2], actual: usize },
-    Prefix { expected: &'a str, actual: &'a str },
-}
+pub use error::Error;
+pub use try_checksum::*;
 
 pub struct Checksum {}
 
 impl Checksum {
-    pub fn checksum(input: &str) -> Result<String, Error> {
+    pub fn from_str(input: &str) -> Result<String, Error> {
         match input.len() {
             40 => Ok(to_checksum_address(input)),
             42 => {
@@ -38,7 +35,58 @@ impl Checksum {
     }
 }
 
+mod error {
+    use std::str::Utf8Error;
+
+    #[derive(Debug)]
+    pub enum Error<'a> {
+        Length {
+            expected_either: [usize; 2],
+            actual: usize,
+        },
+        Prefix {
+            expected: &'a str,
+            actual: &'a str,
+        },
+        Utf8(Utf8Error),
+    }
+
+    impl<'a> From<Utf8Error> for Error<'a> {
+        fn from(e: Utf8Error) -> Self {
+            Self::Utf8(e)
+        }
+    }
+}
+
+mod try_checksum {
+    use super::*;
+
+    pub trait TryChecksum {
+        fn try_checksum<'a>(&'a self) -> Result<String, Error<'a>>;
+    }
+
+    impl TryChecksum for str {
+        fn try_checksum<'a>(&'a self) -> Result<String, Error<'a>> {
+            Checksum::from_str(self)
+        }
+    }
+
+    impl TryChecksum for String {
+        fn try_checksum<'a>(&'a self) -> Result<String, Error<'a>> {
+            Checksum::from_str(self)
+        }
+    }
+
+    impl TryChecksum for [u8; 40] {
+        fn try_checksum<'a>(&'a self) -> Result<String, Error<'a>> {
+            let string = std::str::from_utf8(self)?;
+            Checksum::from_str(&string)
+        }
+    }
+}
+
 fn to_checksum_address(address_string: &str) -> String {
+    // @TODO: Address_strin might not be a valid Hex, look into that!
     let address_string = address_string.to_lowercase();
     let hash = keccak256_hash(&address_string);
 
@@ -57,7 +105,7 @@ fn to_checksum_address(address_string: &str) -> String {
 }
 
 fn keccak256_hash<T: AsRef<[u8]>>(address: T) -> [u8; 40] {
-    use tiny_keccak::{Keccak, Hasher};
+    use tiny_keccak::{Hasher, Keccak};
 
     let mut hasher = Keccak::v256();
 
@@ -70,9 +118,9 @@ fn keccak256_hash<T: AsRef<[u8]>>(address: T) -> [u8; 40] {
 
 fn get_half_byte_at(array: &[u8; 40], i: usize) -> u8 {
     if i & 1 == 0 {
-        unsafe { array.get_unchecked(i / 2) >> 4 }
+        array[i / 2] >> 4
     } else {
-        unsafe { array.get_unchecked(i / 2) & 0x0f }
+        array[i / 2] & 0x0f
     }
 }
 
@@ -83,31 +131,29 @@ mod tests {
     use test::Bencher;
 
     #[test]
-    fn prefixed_hash() {
-        let hash = "0xe0fc04fa2d34a66b779fd5cee748268032a146c0";
-        let result = Checksum::checksum(hash).expect("Is valid");
+    fn test_checksum_from_str() {
+        let prefixed_checksum = "0xe0FC04FA2d34a66B779fd5CEe748268032a146c0";
 
-        assert_eq!(PREFIX, &result[..2]);
-    }
-
-    #[test]
-    fn test_checksum() {
         let addr_lowercase = "0xe0fc04fa2d34a66b779fd5cee748268032a146c0";
-        let checksummed = Checksum::checksum(addr_lowercase).expect("Should be valid String!");
-        assert_eq!(checksummed, "0xe0FC04FA2d34a66B779fd5CEe748268032a146c0");
+        let checksummed = Checksum::from_str(&addr_lowercase).expect("Should be valid String!");
+
+        assert_eq!(PREFIX, &checksummed[..2]);
+        assert_eq!(checksummed, prefixed_checksum);
 
         let addr_uppercase = "0xE0FC04FA2D34A66B779FD5CEE748268032A146C0";
-        let checksummed = Checksum::checksum(addr_uppercase).expect("Should be valid String!");
-        assert_eq!(checksummed, "0xe0FC04FA2d34a66B779fd5CEe748268032a146c0");
-    }
+        let checksummed = Checksum::from_str(&addr_uppercase).expect("Should be valid String!");
 
+        assert_eq!(PREFIX, &checksummed[..2]);
+        assert_eq!(checksummed, prefixed_checksum);
+    }
+    
     #[bench]
     fn bench_checksum(b: &mut Bencher) {
         b.iter(|| {
             let address = test::black_box("0xe0fc04fa2d34a66b779fd5cee748268032a146c0");
 
             for _ in 0..20_000 {
-                Checksum::checksum(address).unwrap();
+                Checksum::from_str(address).unwrap();
             }
         })
     }
