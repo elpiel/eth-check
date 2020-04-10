@@ -1,3 +1,5 @@
+#![deny(clippy::all)]
+#![deny(rust_2018_idioms)]
 #![cfg_attr(any(test, bench), feature(test))]
 
 static PREFIX: &str = "0x";
@@ -8,7 +10,7 @@ pub use try_checksum::*;
 pub struct Checksum {}
 
 impl Checksum {
-    pub fn from_str(input: &str) -> Result<String, Error> {
+    pub fn from_str(input: &str) -> Result<String, Error<'_>> {
         match input.len() {
             40 => to_checksum_address(input),
             42 => {
@@ -90,7 +92,7 @@ mod try_checksum {
     }
 }
 
-fn to_checksum_address(address_string: &str) -> Result<String, Error> {
+fn to_checksum_address(address_string: &str) -> Result<String, Error<'_>> {
     let address_string = address_string.to_lowercase();
     let hash = keccak256_hash(&address_string);
 
@@ -105,15 +107,15 @@ fn to_checksum_address(address_string: &str) -> Result<String, Error> {
                     } else {
                         a_char
                     }
-                },
+                }
                 a_char => {
                     // fail as soon as possible
                     // On the first invalid char
                     return Err(Error::HexChar {
                         value: a_char,
                         index: i,
-                    })
-                },
+                    });
+                }
             };
 
             result.push(new_char);
@@ -167,6 +169,30 @@ mod tests {
     }
 
     #[test]
+    /// See EIP-55: https://github.com/ethereum/EIPs/blob/master/EIPS/eip-55.md#test-cases
+    fn test_checksum_from_str_eip_55_cases() {
+        let cases = [
+            // All caps:
+            "0x52908400098527886E0F7030069857D2E4169EE7",
+            "0x8617E340B3D01FA5F11F306F4090FD50E238070D",
+            // All lower
+            "0xde709f2102306220921060314715629080e2fb77",
+            "0x27b1fdb04752bbc536007a920d24acb045561c26",
+            // Normal:
+            "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+            "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+            "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
+            "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
+        ];
+
+        for address in cases.iter() {
+            let checksummed = Checksum::from_str(&address).expect("Should be valid String!");
+
+            assert_eq!(&checksummed, address);
+        }
+    }
+
+    #[test]
     fn test_invalid_hex_char() {
         let hex_char = "eqfc04fa2d34a66b779fd5cee748268032a146c0";
 
@@ -175,8 +201,8 @@ mod tests {
             index: 1,
         };
         assert_eq!(Err(expected_err), Checksum::from_str(hex_char));
-
     }
+
     #[bench]
     fn bench_checksum(b: &mut Bencher) {
         b.iter(|| {
